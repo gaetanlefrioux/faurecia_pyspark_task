@@ -2,40 +2,48 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, when, from_json, json_tuple, explode
 import argparse
 
-def transform(inputFile, nestedField):
+"""
+    Transform the content of the input CSV file by unpacking the given JSON field
+    arguments:
+        - inputFile [str] : path to the input file
+        - jsonField [str] : json field to be unpacked
+    return:
+        - Spark Dataframe with the transformation applied
+"""
+def transform(inputFile, jsonField):
     spark = SparkSession.builder \
             .master("local") \
-            .appName("myApp") \
+            .appName("unpack") \
             .getOrCreate()
 
     df = spark.read.format("csv").option("header", "true").load(inputFile)
 
     # Inferring name of nested columns from the data
-    nested_cols = df.select(
-                    from_json(nestedField, "MAP<String, String>").alias("jsonData")) \
+    nestedCols = df.select(
+                    from_json(jsonField, "MAP<String, String>").alias("jsonData")) \
                 .select(explode("jsonData")) \
                 .select("key").distinct().collect()
 
-    nested_col_list = [r["key"] for r in nested_cols]
-    keep_cols = set(df.columns) - set([nestedField])
-    all_cols = list(keep_cols) + nested_col_list
+    nestedColList = [r["key"] for r in nestedCols]
+    keepCols = set(df.columns) - set([jsonField])
+    allCols = list(keepCols) + nestedColList
 
     # Unpack Combined_Dict columns
-    unpacked_df = df.select(*keep_cols, json_tuple(nestedField, *nested_col_list)).toDF(*all_cols)
+    unpackedDf = df.select(*keepCols, json_tuple(jsonField, *nestedColList)).toDF(*allCols)
 
     # Clean Empty Values
-    cleaned_df = unpacked_df.select([when(col(c) == "", None).otherwise(col(c)).alias(c) for c in unpacked_df.columns])
+    cleanedDf = unpackedDf.select([when(col(c) == "", None).otherwise(col(c)).alias(c) for c in unpackedDf.columns])
 
-    return cleaned_df
+    return cleanedDf
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", "--input", help="Path to the input file to be transformed", required=True)
     parser.add_argument("-o", "--output", help="Path to the output directory where to write the transformed data", required=True)
-    nestedField = "Combined_Dict"
+    jsonField = "Combined_Dict"
 
     args = parser.parse_args()
-    transformed_df = transform(args.input, nestedField)
+    transformed_df = transform(args.input, jsonField)
 
     # Writing result
     transformed_df.write.option("header","true").csv(args.output)
