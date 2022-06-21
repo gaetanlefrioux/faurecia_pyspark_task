@@ -1,36 +1,42 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, when, from_json, json_tuple, explode
+import argparse
 
+def transform(inputFile, nestedField):
+    spark = SparkSession.builder \
+            .master("local") \
+            .appName("myApp") \
+            .getOrCreate()
 
+    df = spark.read.format("csv").option("header", "true").load(inputFile)
 
-inputFile = "./data/pyspark_task1_source.csv"
-outputFile = "./data/pyspark_task1_mytransformed.csv"
-nestedField = "Combined_Dict"
+    # Inferring name of nested columns from the data
+    nested_cols = df.select(
+                    from_json(nestedField, "MAP<String, String>").alias("jsonData")) \
+                .select(explode("jsonData")) \
+                .select("key").distinct().collect()
 
+    nested_col_list = [r["key"] for r in nested_cols]
+    keep_cols = set(df.columns) - set([nestedField])
+    all_cols = list(keep_cols) + nested_col_list
 
-spark = SparkSession.builder \
-        .master("local") \
-        .appName("myApp") \
-        .getOrCreate()
+    # Unpack Combined_Dict columns
+    unpacked_df = df.select(*keep_cols, json_tuple(nestedField, *nested_col_list)).toDF(*all_cols)
 
-df = spark.read.format("csv").option("header", "true").load(inputFile)
+    # Clean Empty Values
+    cleaned_df = unpacked_df.select([when(col(c) == "", None).otherwise(col(c)).alias(c) for c in unpacked_df.columns])
 
-# Inferring name of nested columns from the data
-nested_cols = df.select(
-                from_json("Combined_Dict", "MAP<String, String>").alias("jsonData")) \
-              .select(explode("jsonData")) \
-              .select("key").distinct().collect()
+    return cleaned_df
 
-nested_col_list = [r["key"] for r in nested_cols]
-keep_cols = set(df.columns) - set(["Combined_Dict"])
-all_cols = list(keep_cols) + nested_col_list
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-i", "--input", help="Path to the input file to be transformed", required=True)
+    parser.add_argument("-o", "--output", help="Path to the output directory where to write the transformed data", required=True)
+    nestedField = "Combined_Dict"
 
-# Unpack Combined_Dict columns
-unpacked_df = df.select(*keep_cols, json_tuple("Combined_Dict", *nested_col_list)).toDF(*all_cols)
+    args = parser.parse_args()
+    transformed_df = transform(args.input, nestedField)
 
-# Clean Empty Values
-cleaned_df = unpacked_df.select([when(col(c) == "", None).otherwise(col(c)).alias(c) for c in unpacked_df.columns])
-
-# Writing result
-cleaned_df.write.option("header","true").csv(outputFile)
+    # Writing result
+    transformed_df.write.option("header","true").csv(args.output)
 
