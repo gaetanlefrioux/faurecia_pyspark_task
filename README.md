@@ -35,3 +35,5 @@ This makes the transformation more flexible allowing to handle JSON value with m
 The transform script will only unpack the first level of the JSON field. 
 
 In some use cases it might be more suitable to specify directly the Schema and make the transformation less flexible to identify malformed data at an early stage.
+
+For testing purposes the transform script is using Spark with local mode
